@@ -7,60 +7,74 @@ This repository runs vLLM; the chat interface / Open WebUI lives in the UI proje
 KYBELE-UI / Open WebUI → vLLM OpenAI-compatible API → local GPU model
 ```
 
-## Test on your Mac (Apple Silicon)
+## Run on your Mac GPU (Apple Silicon)
 
-`Dockerfile.mac` and the standalone `compose.mac.yaml` run **llama.cpp on CPU**
-inside Ubuntu 24.04, with a small [Qwen3 0.6B Q8 model](https://huggingface.co/Qwen/Qwen3-0.6B-GGUF).
-This tests the chat API locally; it does not test vLLM or NVIDIA performance.
-The container does not use Apple's Metal GPU. The NVIDIA setup below is unchanged.
+The Mac setup uses **Docker Model Runner with Metal on the macOS host**.
+`Dockerfile.mac` builds an Ubuntu API gateway; GPU inference runs outside the
+Linux container because Docker Desktop does not pass the Apple GPU through to
+Linux containers. `start_mac.py` configures the Qwen3 0.6B Q8 model and requests
+GPU offload for all layers. The NVIDIA vLLM deployment remains separate.
 
-Start Docker Desktop first. Give its Linux VM at least 4 GB RAM and 4 CPU cores
-for this small model and the build. Then, from this directory:
+Requires Docker Desktop with Model Runner support and Docker Compose v2+.
+Start Docker Desktop, then run from this directory:
 
 ```sh
+docker desktop enable model-runner
 # Only copy if you have not already created .env:
 cp -n .env.example .env
 # Edit .env and set VLLM_API_KEY to your own secret.
-docker compose -f compose.mac.yaml up -d --build
-docker compose -f compose.mac.yaml logs -f llm
+python3 start_mac.py
 ```
 
-The first build compiles llama.cpp (pinned to `b10524`); first startup downloads
-the model. Both need internet access and may take several minutes. Subsequent
-starts reuse the image and model cache. Wait for a healthy service:
+The startup script pulls the model into Docker Model Runner's cache only if absent. The first chat request
+loads it onto the GPU. The previous CPU container's named cache is left intact;
+Docker Model Runner uses a separate cache and may download the model again.
+This setup no longer pins a custom llama.cpp build: Docker Desktop manages its
+inference backend version.
 
 ```sh
-docker compose -f compose.mac.yaml ps
 curl --fail http://localhost:8000/health
+docker model status
+docker model ps
 ```
 
-Test a chat request (replace `YOUR_SECRET` with the key from `.env`):
+`/health` checks runner connectivity and model registration; send a chat request
+to verify inference. Replace `YOUR_SECRET` with the key from `.env`:
 
 ```sh
 curl http://localhost:8000/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_SECRET' \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen","messages":[{"role":"user","content":"Say hello in Greek."}],"max_tokens":128}'
+  -d '{"model":"qwen","messages":[{"role":"user","content":"Say hello."}],"max_tokens":128}'
 ```
 
-For Open WebUI running on the host, use `http://localhost:8000/v1`, your API key,
-and model `qwen`. For Open WebUI in Docker, attach its container to
-`kybele-middle-mac_default` and use `http://llm:8000/v1`.
-The Mac model allows 8,192 tokens total for the prompt, chat history, and generated
-response. Longer conversations must be shortened or started fresh when they reach
-that limit.
+The gateway keeps the existing `qwen` alias, API key, `/v1/models`, and streaming
+chat API. Connect Open WebUI on the host to `http://localhost:8000/v1`. For Open
+WebUI in Docker, attach it to `kybele-middle-mac_default` and use
+`http://llm:8000/v1`. The old llama.cpp browser UI at port 8000 is no longer served;
+use Open WebUI or Docker Desktop's Models chat interface.
 
-This Mac configuration always loads the small Qwen model; `MODEL_PRESET` in
-`.env` applies only to the NVIDIA setup. Both setups use port 8000 by default,
-so stop one before starting the other (or change `PORT`).
+The context is 8,192 tokens total for prompt, history, and response. Change
+the context-size argument in `start_mac.py` and rerun the script to adjust it.
+`MODEL_PRESET` applies only to NVIDIA; the Mac model is selected with
+`MAC_MODEL` in `.env` (default: `hf.co/Qwen/Qwen3-0.6B-GGUF:Q8_0`). A locally
+imported copy can be selected with `MAC_MODEL=kybele/qwen:0.6b-q8`. The small model is for integration testing, not quality
+benchmarks. GPU utilization varies with workload; 100% utilization is not expected
+at all times. Verify the Metal backend with `docker model status`, the active model with
+`docker model ps`, and the 99-layer GPU offload setting with
+`docker model configure show YOUR_MAC_MODEL`.
 
 ```sh
 docker compose -f compose.mac.yaml down
+# Model Runner is shared with other apps. To unload just this model:
+docker model unload YOUR_MAC_MODEL
 ```
 
-The model cache persists after stopping. See the upstream
-[llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)
-for API details.
+Stopping Compose does not disable Docker Model Runner. Both Mac and NVIDIA setups
+publish port 8000 by default, so run one at a time or change `PORT`.
+
+References: [Docker Model Runner](https://docs.docker.com/ai/model-runner/),
+[Compose models](https://docs.docker.com/ai/compose/models-and-compose/).
 
 ## NVIDIA deployment requirements
 
