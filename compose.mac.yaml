@@ -1,0 +1,24 @@
+# Standalone file: do not merge with the NVIDIA compose.yaml.
+name: kybele-middle-mac
+services:
+  llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.mac
+    platform: linux/arm64
+    ports:
+      - "127.0.0.1:${PORT:-8000}:8000"
+    environment:
+      LLAMA_API_KEY: ${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - mac-model-cache:/data/models
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10m
+      retries: 5
+
+volumes:
+  mac-model-cache:

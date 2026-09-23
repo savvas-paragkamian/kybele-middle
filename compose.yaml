@@ -1,0 +1,31 @@
+services:
+  vllm:
+    build: .
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8000}:8000"
+    environment:
+      MODEL_PRESET: ${MODEL_PRESET:-qwen}
+      VLLM_API_KEY: ${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      HF_TOKEN: ${HF_TOKEN:-}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-4096}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-2}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.85}
+    volumes:
+      - model-cache:/data/huggingface
+    shm_size: 2gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10m
+      retries: 5
+
+volumes:
+  model-cache:

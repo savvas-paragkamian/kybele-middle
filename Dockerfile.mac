@@ -1,0 +1,23 @@
+# CPU-only Linux container for Docker Desktop on Apple Silicon.
+FROM ubuntu:24.04 AS build
+ARG LLAMA_CPP_VERSION=b10524
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${LLAMA_CPP_VERSION}" \
+        https://github.com/ggml-org/llama.cpp.git /src
+RUN cmake -S /src -B /src/build \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF \
+        -DLLAMA_OPENSSL=ON -DLLAMA_BUILD_TESTS=OFF \
+    && cmake --build /src/build --target llama-server -j 4
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl libssl3t64 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server
+ENV LLAMA_CACHE=/data/models
+EXPOSE 8000
+ENTRYPOINT ["llama-server"]
+CMD ["--hf-repo", "Qwen/Qwen3-0.6B-GGUF:Q8_0", "--alias", "qwen", "--host", "0.0.0.0", "--port", "8000", "--ctx-size", "8192", "--parallel", "1", "--n-gpu-layers", "0", "--jinja", "--reasoning", "off"]
